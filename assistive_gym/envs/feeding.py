@@ -7,7 +7,8 @@ from .env import AssistiveEnv
 
 class FeedingEnv(AssistiveEnv):
     def __init__(self, robot_type='pr2', human_control=False):
-        super(FeedingEnv, self).__init__(robot_type=robot_type, task='feeding', human_control=human_control, frame_skip=10, time_step=0.01, action_robot_len=7, action_human_len=(4 if human_control else 0), obs_robot_len=25, obs_human_len=(23 if human_control else 0))
+        super(FeedingEnv, self).__init__(robot_type=robot_type, task='feeding', human_control=human_control, frame_skip=10, time_step=0.01, action_robot_len=7, action_human_len=(4 if human_control else 0), obs_robot_len=23, obs_human_len=(23 if human_control else 0))
+        self.spilled_food = 0
 
     def step(self, action):
         self.take_step(action, robot_arm='right', gains=self.config('robot_gains'), forces=self.config('robot_forces'), human_gains=0.0005)
@@ -19,7 +20,7 @@ class FeedingEnv(AssistiveEnv):
         obs = self._get_obs([spoon_force_on_human], [robot_force_on_human, spoon_force_on_human])
 
         # Get human preferences
-        preferences_score = self.human_preferences(end_effector_velocity=end_effector_velocity, total_force_on_human=robot_force_on_human, tool_force_at_target=spoon_force_on_human, food_hit_human_reward=food_hit_human_reward, food_mouth_velocities=food_mouth_velocities)
+#         preferences_score = self.human_preferences(end_effector_velocity=end_effector_velocity, total_force_on_human=robot_force_on_human, tool_force_at_target=spoon_force_on_human, food_hit_human_reward=food_hit_human_reward, food_mouth_velocities=food_mouth_velocities)
 
         spoon_pos, spoon_orient = p.getBasePositionAndOrientation(self.spoon, physicsClientId=self.id)
         spoon_pos = np.array(spoon_pos)
@@ -27,14 +28,14 @@ class FeedingEnv(AssistiveEnv):
         reward_distance_mouth_target = -np.linalg.norm(self.target_pos - spoon_pos) # Penalize robot for distance between the spoon and human mouth.
         reward_action = -np.sum(np.square(action)) # Penalize actions
 
-        reward = self.config('distance_weight')*reward_distance_mouth_target + self.config('action_weight')*reward_action + self.config('food_reward_weight')*reward_food + preferences_score
+        reward = self.config('distance_weight')*reward_distance_mouth_target + self.config('action_weight')*reward_action + self.config('food_reward_weight')*reward_food #+ preferences_score
 
         if self.gui and reward_food != 0:
             print('Task success:', self.task_success, 'Food reward:', reward_food)
 
-        info = {'total_force_on_human': total_force_on_human, 'task_success': int(self.task_success >= self.total_food_count*self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
+        info = {'total_force_on_human': total_force_on_human, 'task_success': int(self.task_success), 'spilled_food': int(self.spilled_food), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
+#         info = {'total_force_on_human': total_force_on_human, 'task_success': int(self.task_success >= self.total_food_count*self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
         done = False
-
         return obs, reward, done, info
 
     def get_total_force(self):
@@ -53,10 +54,14 @@ class FeedingEnv(AssistiveEnv):
         food_hit_human_reward = 0
         food_mouth_velocities = []
         foods_to_remove = []
+        spoon_pos, spoon_orient = p.getBasePositionAndOrientation(self.spoon, physicsClientId=self.id)
+        distance_to_mouth = np.linalg.norm(self.target_pos - spoon_pos)
         for f in self.foods:
             food_pos, food_orient = p.getBasePositionAndOrientation(f, physicsClientId=self.id)
-            distance_to_mouth = np.linalg.norm(self.target_pos - food_pos)
-            if distance_to_mouth < 0.02:
+            
+            distance_to_mouth = np.linalg.norm(self.target_pos - spoon_pos)
+#             distance_to_mouth = np.linalg.norm(self.target_pos - food_pos)
+            if distance_to_mouth < 0.05:
                 # Delete particle and give robot a reward
                 food_reward += 20
                 self.task_success += 1
@@ -67,6 +72,7 @@ class FeedingEnv(AssistiveEnv):
                 continue
             elif food_pos[-1] < 0.5 or len(p.getContactPoints(bodyA=f, bodyB=self.table, physicsClientId=self.id)) > 0 or len(p.getContactPoints(bodyA=f, bodyB=self.bowl, physicsClientId=self.id)) > 0:
                 # Delete particle and give robot a penalty for spilling food
+                self.spilled_food += 1
                 food_reward -= 5
                 foods_to_remove.append(f)
                 continue
@@ -90,7 +96,7 @@ class FeedingEnv(AssistiveEnv):
 
         head_pos, head_orient = p.getLinkState(self.human, 23, computeForwardKinematics=True, physicsClientId=self.id)[:2]
 
-        robot_obs = np.concatenate([spoon_pos-torso_pos, spoon_orient, spoon_pos-self.target_pos, robot_right_joint_positions, head_pos-torso_pos, head_orient, forces]).ravel()
+        robot_obs = np.concatenate([spoon_pos-torso_pos, p.getEulerFromQuaternion(spoon_orient), spoon_pos-self.target_pos, robot_right_joint_positions, head_pos-torso_pos, p.getEulerFromQuaternion(head_orient), forces]).ravel()
         if self.human_control:
             human_obs = np.concatenate([spoon_pos-human_pos, spoon_orient, spoon_pos-self.target_pos, human_joint_positions, head_pos-human_pos, head_orient, forces_human]).ravel()
         else:
@@ -101,6 +107,7 @@ class FeedingEnv(AssistiveEnv):
     def reset(self):
         self.setup_timing()
         self.task_success = 0
+        self.spilled_food = 0
         self.human, self.wheelchair, self.robot, self.robot_lower_limits, self.robot_upper_limits, self.human_lower_limits, self.human_upper_limits, self.robot_right_arm_joint_indices, self.robot_left_arm_joint_indices, self.gender = self.world_creation.create_new_world(furniture_type='wheelchair', static_human_base=True, human_impairment='random', print_joints=False, gender='random')
         self.robot_lower_limits = self.robot_lower_limits[self.robot_right_arm_joint_indices]
         self.robot_upper_limits = self.robot_upper_limits[self.robot_right_arm_joint_indices]
