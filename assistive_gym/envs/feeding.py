@@ -61,7 +61,7 @@ class FeedingEnv(AssistiveEnv):
             
             distance_to_mouth = np.linalg.norm(self.target_pos - spoon_pos)
 #             distance_to_mouth = np.linalg.norm(self.target_pos - food_pos)
-            if distance_to_mouth < 0.05:
+            if distance_to_mouth < 0.03:
                 # Delete particle and give robot a reward
                 food_reward += 20
                 self.task_success += 1
@@ -97,10 +97,11 @@ class FeedingEnv(AssistiveEnv):
         head_pos, head_orient = p.getLinkState(self.human, 23, computeForwardKinematics=True, physicsClientId=self.id)[:2]
 
         robot_obs = np.concatenate([spoon_pos-torso_pos, p.getEulerFromQuaternion(spoon_orient), spoon_pos-self.target_pos, robot_right_joint_positions, head_pos-torso_pos, p.getEulerFromQuaternion(head_orient), forces]).ravel()
-        if self.human_control:
-            human_obs = np.concatenate([spoon_pos-human_pos, spoon_orient, spoon_pos-self.target_pos, human_joint_positions, head_pos-human_pos, head_orient, forces_human]).ravel()
-        else:
-            human_obs = []
+#         if self.human_control:
+#             human_obs = np.concatenate([spoon_pos-human_pos, spoon_orient, spoon_pos-self.target_pos, human_joint_positions, head_pos-human_pos, head_orient, forces_human]).ravel()
+#         else:
+#             human_obs = []
+        human_obs = []
 
         return np.concatenate([robot_obs, human_obs]).ravel()
 
